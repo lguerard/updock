@@ -1,0 +1,69 @@
+name: Release
+
+# Actions → Release → Run workflow, version "0.1.0": tags v0.1.0, publishes
+# ghcr.io/<owner>/updock:0.1.0, :0.1, :0 and :latest, and creates the GitHub
+# release with generated notes.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, without the v (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the version
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::version must look like 1.2.3"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Self-test
+        run: python -I updock.py --selftest
+      - name: Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "updock v$VERSION"
+          git push origin "v$VERSION"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ inputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ inputs.version }}
+            type=semver,pattern={{major}},value=v${{ inputs.version }}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ inputs.version }}
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "v$VERSION" --title "updock v$VERSION" --generate-notes

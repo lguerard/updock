@@ -142,8 +142,10 @@ python3 updock.py --selftest     # dependency-free tests
 python3 updock.py --check        # one check, then exit
 ```
 
-The image is built and published by GitHub Actions: `main` → `:edge`,
-tag `v1.2.3` → `:1.2.3`, `:1.2`, `:1`, `:latest`.
+The image is built and published by GitHub Actions: every push to `main`
+gives `:edge`. To release, run **Actions → Release → Run workflow** with a
+version (`0.2.0`): it tags `v0.2.0`, publishes `:0.2.0`, `:0.2`, `:0` and
+`:latest`, and creates the GitHub release.
 
 ## License
 
