@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en" data-lang="__UPDOCK_LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>updock</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M16 8v12m0-12-5 5m5-5 5 5M10 24h12' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f5f6f8; --panel: #ffffff; --panel-2: #fafbfc; --line: #e7e9ee; --line-2: #eff1f4;
+  --text: #121620; --muted: #687080; --faint: #a1a7b3;
+  --accent: #4f46e5; --accent-soft: #eef0ff; --accent-ink: #ffffff;
+  --ok: #15a34a; --ok-soft: #e8f7ee; --warn: #c2700a; --warn-soft: #fdf3e3;
+  --bad: #d92d2d; --bad-soft: #fdecec; --info: #2563eb; --info-soft: #e9f0fe;
+  --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --r: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0d12; --panel: #12151c; --panel-2: #151922; --line: #222734; --line-2: #1a1e28;
+    --text: #e8eaf0; --muted: #949bab; --faint: #5e6575;
+    --accent: #8b8cf8; --accent-soft: #1e1f3d; --accent-ink: #0b0d12;
+    --ok: #34d17a; --ok-soft: #10261a; --warn: #f2a33a; --warn-soft: #2a1f0d;
+    --bad: #f47272; --bad-soft: #2c1414; --info: #6ea8ff; --info-soft: #121f36;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+button { font: inherit; color: inherit; }
+a { color: inherit; }
+.wrap { max-width: 880px; margin: 0 auto; padding: 0 16px; }
+
+/* header */
+header {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  border-bottom: 1px solid var(--line-2);
+}
+.bar { display: flex; align-items: center; gap: 12px; height: 60px; }
+.logo { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); display: grid; place-items: center; flex: none; }
+.logo svg { width: 18px; height: 18px; stroke: var(--accent-ink); }
+.title { min-width: 0; flex: 1; }
+.title b { display: block; font-size: 15px; letter-spacing: -.01em; }
+.title span { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border-radius: 9px; border: 1px solid var(--line); background: var(--panel);
+  cursor: pointer; font-weight: 550; font-size: 13px; white-space: nowrap; box-shadow: var(--shadow);
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+.btn:hover { border-color: var(--faint); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn svg { width: 15px; height: 15px; flex: none; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.07); }
+.btn.ghost { background: transparent; box-shadow: none; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--line-2); color: var(--text); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.icon-btn {
+  width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 8px;
+  border: 0; background: transparent; color: var(--muted); cursor: pointer; flex: none; text-decoration: none;
+}
+.icon-btn:hover { background: var(--line-2); color: var(--text); }
+.icon-btn svg { width: 16px; height: 16px; }
+
+/* summary */
+.summary { display: flex; align-items: center; gap: 14px; margin: 20px 0 14px; }
+.big { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.big small { display: block; font-size: 13px; font-weight: 450; color: var(--muted); letter-spacing: 0; margin-top: 2px; }
+.ring { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+.ring svg { width: 22px; height: 22px; }
+.ring.ok { background: var(--ok-soft); color: var(--ok); }
+.ring.up { background: var(--accent-soft); color: var(--accent); }
+
+/* update cards */
+.cards { display: grid; gap: 10px; margin-bottom: 22px; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 12px 12px 12px 14px; box-shadow: var(--shadow);
+}
+.card-top { display: flex; align-items: center; gap: 10px; }
+.card .who { flex: 1; min-width: 0; }
+.card .who b { font-size: 14.5px; }
+.card .who .ref { display: block; }
+.card-actions { display: flex; gap: 4px; align-items: center; flex: none; }
+.notes {
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--panel-2);
+  border: 1px solid var(--line-2); color: var(--muted); font-size: 12.5px;
+  white-space: pre-wrap; max-height: 220px; overflow: auto;
+}
+.warnline { margin-top: 8px; display: flex; gap: 6px; align-items: center; color: var(--warn); font-size: 12.5px; font-weight: 550; }
+.warnline svg { width: 14px; height: 14px; flex: none; }
+.bulk { display: flex; justify-content: space-between; align-items: center; margin: 0 0 10px; }
+.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 650; }
+
+/* toolbar */
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--line-2); overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.seg::-webkit-scrollbar { display: none; }
+.seg button {
+  border: 0; background: transparent; height: 28px; padding: 0 10px; border-radius: 8px;
+  color: var(--muted); font-weight: 550; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+}
+.seg button.on { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+.seg .n { margin-left: 5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.seg button.on .n { color: var(--muted); }
+.search {
+  flex: 1; min-width: 140px; height: 34px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--panel); padding: 0 12px 0 32px; font: inherit; color: var(--text); outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: 10px center;
+}
+.search:focus { border-color: var(--accent); }
+
+/* list */
+.group { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 12px; overflow: hidden; box-shadow: var(--shadow); }
+.group-h { display: flex; justify-content: space-between; align-items: center; padding: 9px 14px; background: var(--panel-2); border-bottom: 1px solid var(--line-2); }
+.group-h b { font-size: 12.5px; letter-spacing: .01em; }
+.group-h span { color: var(--faint); font-size: 12px; }
+.row {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; gap: 12px; align-items: center;
+  padding: 9px 10px 9px 14px; border-top: 1px solid var(--line-2);
+}
+.group-h + .row { border-top: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dot.current { background: var(--ok); }
+.dot.update { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.dot.rebuild, .dot.ignored { background: var(--info); opacity: .7; }
+.dot.recreate { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.dot.error { background: var(--bad); }
+.dot.other, .dot.pending { background: transparent; border: 1.5px solid var(--faint); }
+.who { min-width: 0; }
+.who b { font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ref { color: var(--faint); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.reason { color: var(--muted); font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ver { font-family: var(--mono); font-size: 12.5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ver .old { color: var(--muted); }
+.ver .arrow { color: var(--faint); margin: 0 4px; }
+.ver .new { font-weight: 650; color: var(--text); }
+.ver .none { color: var(--faint); }
+.actions { display: flex; gap: 2px; justify-content: flex-end; min-width: 30px; }
+.pill {
+  display: inline-block; font: 600 10.5px/1 system-ui, sans-serif; letter-spacing: .03em; text-transform: uppercase;
+  padding: 4px 6px; border-radius: 6px; margin-left: 6px; vertical-align: 1px;
+}
+.pill.patch { background: var(--ok-soft); color: var(--ok); }
+.pill.minor { background: var(--info-soft); color: var(--info); }
+.pill.major { background: var(--bad-soft); color: var(--bad); }
+.pill.rebuild, .pill.unknown, .pill.ignored { background: var(--line-2); color: var(--muted); }
+.pill.recreate { background: var(--warn-soft); color: var(--warn); }
+.job { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.job.done { color: var(--ok); }
+.job.failed { color: var(--bad); }
+.job svg { width: 14px; height: 14px; flex: none; }
+.job { max-width: 100%; }
+.job .jmsg { overflow: hidden; text-overflow: ellipsis; }
+.job.failed { cursor: pointer; }
+.card .job { white-space: normal; align-items: flex-start; }
+.card .job svg { margin-top: 2px; }
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.warn-ic { color: var(--warn); display: inline-flex; vertical-align: -2px; }
+.warn-ic svg { width: 13px; height: 13px; }
+.empty { text-align: center; color: var(--muted); padding: 36px 12px; }
+.foot { color: var(--faint); font-size: 12px; text-align: center; padding: 18px 0 30px; }
+
+/* toast */
+.toast {
+  position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
+  background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: 11px; font-size: 13px; font-weight: 550;
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; max-width: calc(100% - 32px); z-index: 20;
+}
+.toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.bad { background: var(--bad); color: #fff; }
+
+@media (max-width: 560px) {
+  .row { grid-template-columns: 10px minmax(0, 1fr) auto; row-gap: 4px; }
+  .row .ver { grid-column: 2; text-align: left; }
+  .row .actions { grid-column: 3; grid-row: 1 / span 2; }
+  .big { font-size: 19px; }
+  .hide-sm { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation-duration: 2s !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0M3 3l18 18"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-notes" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+  </defs>
+</svg>
+
+<header>
+  <div class="wrap bar">
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v11M12 5 8 9M12 5l4 4M6 19h12"/></svg></div>
+    <div class="title"><b>updock</b><span id="sub"></span></div>
+    <button class="btn" id="checkBtn" type="button"><svg><use href="#i-refresh"/></svg><span></span></button>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="summary" id="summary"></div>
+  <div id="updates"></div>
+  <div class="toolbar">
+    <div class="seg" id="seg" role="tablist"></div>
+    <input class="search" id="q" type="search" autocomplete="off">
+  </div>
+  <div id="list"></div>
+  <div class="foot" id="foot"></div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const icon = (id) => `<svg><use href="#i-${id}"/></svg>`;
+
+// --- translations (UPDOCK_LANG on the server picks one) --------------------
+const I18N = {
+  en: {
+    loading: "Loading…", check: "Check", checking: "Checking…", running: "Running…", search: "Search…",
+    f_all: "All", f_updates: "Updates", f_attention: "Needs attention", f_current: "Up to date", f_other: "Not watched",
+    k_patch: "patch", k_minor: "new", k_major: "major", k_rebuild: "build", k_unknown: "build",
+    r_rebuild: "new build, same version", r_ignored: "version ignored",
+    now: "just now", min: (n) => `${n} min ago`, h: (n) => `${n} h ago`, d: (n) => `${n} d ago`, never: "never",
+    today: "today", tomorrow: "tomorrow",
+    unreachable: "Server unreachable: ",
+    confirm_major: (n, a, b) => `${n}: MAJOR version (${a} → ${b}).\nRead the release notes first. Update?`,
+    t_check: "Check started", t_update: (n) => `Updating ${n}`, t_ignore: (n) => `${n}: version ignored`,
+    t_rollback: (n) => `Rolling back ${n}`, t_recreate: (n) => `Recreating ${n}`,
+    confirm_all: (n) => `Update ${n} container${n > 1 ? "s" : ""} (major versions excluded)?\nThey will run one after the other.`,
+    queued_all: (n) => `${n} update${n > 1 ? "s" : ""} queued`,
+    queued: "queued…", failed: "failed: ",
+    b_update: "Update", b_recreate: "Recreate", b_rollback_to: (v) => `Back to ${v}`, b_prev: "the previous version",
+    b_ignore: "Ignore this version", b_notes_link: "Release notes", b_notes: "Release notes", b_hide: "Hide notes",
+    breaking: "Possible breaking changes: read the notes first.",
+    p_recreate: "recreate", p_ignored: "ignored",
+    sub: (a, b) => `Checked ${a} · next ${b}`,
+    n_updates: (n) => `${n} update${n > 1 ? "s" : ""} available`, all_good: "Everything is up to date",
+    watched: (n) => `${n} containers watched`, attention: (n) => ` · ${n} need${n > 1 ? "" : "s"} attention`,
+    available: "Available", update_all: "Update all", no_major: "(major excluded)",
+    empty: "No container here.", foot: (t) => `Automatic check every day at ${t}`,
+    confirm_rollback: (n) => `Roll ${n} back to the previous version?`,
+  },
+  fr: {
+    loading: "Chargement…", check: "Vérifier", checking: "Vérification en cours…", running: "En cours…", search: "Rechercher…",
+    f_all: "Tout", f_updates: "Mises à jour", f_attention: "À traiter", f_current: "À jour", f_other: "Non suivis",
+    k_patch: "correctif", k_minor: "nouveau", k_major: "majeure", k_rebuild: "build", k_unknown: "build",
+    r_rebuild: "nouvelle build, même version", r_ignored: "version ignorée",
+    now: "à l'instant", min: (n) => `il y a ${n} min`, h: (n) => `il y a ${n} h`, d: (n) => `il y a ${n} j`, never: "jamais",
+    today: "aujourd'hui", tomorrow: "demain",
+    unreachable: "Serveur injoignable : ",
+    confirm_major: (n, a, b) => `${n} : version MAJEURE (${a} → ${b}).\nLis les notes de version avant. Mettre à jour ?`,
+    t_check: "Vérification lancée", t_update: (n) => `Mise à jour de ${n} lancée`, t_ignore: (n) => `${n} : version ignorée`,
+    t_rollback: (n) => `Retour arrière de ${n} lancé`, t_recreate: (n) => `Recréation de ${n} lancée`,
+    confirm_all: (n) => `Mettre à jour ${n} conteneur${n > 1 ? "s" : ""} (hors versions majeures) ?\nIls passeront l'un après l'autre.`,
+    queued_all: (n) => `${n} mise${n > 1 ? "s" : ""} à jour en file`,
+    queued: "en file…", failed: "échec : ",
+    b_update: "Mettre à jour", b_recreate: "Recréer", b_rollback_to: (v) => `Revenir à ${v}`, b_prev: "la version précédente",
+    b_ignore: "Ignorer cette version", b_notes_link: "Notes de version", b_notes: "Notes de version", b_hide: "Masquer les notes",
+    breaking: "Changements cassants possibles : lis les notes avant.",
+    p_recreate: "à recréer", p_ignored: "ignorée",
+    sub: (a, b) => `Vérifié ${a} · prochaine ${b}`,
+    n_updates: (n) => `${n} mise${n > 1 ? "s" : ""} à jour disponible${n > 1 ? "s" : ""}`, all_good: "Tout est à jour",
+    watched: (n) => `${n} conteneurs suivis`, attention: (n) => ` · ${n} à traiter`,
+    available: "Disponibles", update_all: "Tout mettre à jour", no_major: "(hors majeures)",
+    empty: "Aucun conteneur ici.", foot: (t) => `Vérification automatique chaque jour à ${t}`,
+    confirm_rollback: (n) => `Revenir à la version précédente de ${n} ?`,
+  },
+};
+const LANG = I18N[document.documentElement.dataset.lang] ? document.documentElement.dataset.lang : "en";
+const T = I18N[LANG];
+const LOCALE = LANG === "fr" ? "fr-FR" : undefined;
+document.documentElement.lang = LANG;
+
+const FILTERS = [
+  ["all", T.f_all, () => true],
+  ["updates", T.f_updates, (c) => ["update", "rebuild", "ignored"].includes(c.status)],
+  ["attention", T.f_attention, (c) => ["recreate", "error"].includes(c.status) || c.job?.state === "failed"],
+  ["current", T.f_current, (c) => c.status === "current"],
+  ["other", T.f_other, (c) => ["other", "pending"].includes(c.status)],
+];
+const STATUS_ORDER = { update: 0, recreate: 1, error: 2, rebuild: 3, ignored: 4, current: 5, pending: 6, other: 7 };
+const kindLabel = (k) => T["k_" + k] || k;
+const REASON = { rebuild: T.r_rebuild, ignored: T.r_ignored };
+
+let data = null;
+let filter = "all";
+let query = "";
+let open = new Set();
+let timer = null;
+let busyLocal = new Set();
+
+try { filter = localStorage.getItem("updock.filter") || "all"; } catch (e) {}
+
+function ago(t) {
+  if (!t) return T.never;
+  const s = Math.max(0, Date.now() / 1000 - t);
+  if (s < 60) return T.now;
+  if (s < 3600) return T.min(Math.round(s / 60));
+  if (s < 86400) return T.h(Math.round(s / 3600));
+  return T.d(Math.round(s / 86400));
+}
+function until(t) {
+  if (!t) return "";
+  const d = new Date(t * 1000);
+  const today = new Date().toDateString() === d.toDateString();
+  return (today ? T.today : T.tomorrow) + " " + d.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+}
+
+async function api(path, method = "GET") {
+  const r = await fetch(path, { method, headers: { "X-Updock": "1" } });
+  let body = null;
+  try { body = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(body?.error || `HTTP ${r.status}`);
+  return body;
+}
+
+function toast(msg, bad = false) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "toast on" + (bad ? " bad" : "");
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => (t.className = "toast" + (bad ? " bad" : "")), 3200);
+}
+
+async function load() {
+  try {
+    data = await api("/api/state");
+    render();
+  } catch (e) {
+    $("#sub").textContent = T.unreachable + e.message;
+  }
+  schedule();
+}
+function busy() {
+  return data && (data.checking || data.containers.some((c) => c.job && ["queued", "running"].includes(c.job.state)));
+}
+function schedule() {
+  clearTimeout(timer);
+  timer = setTimeout(load, busy() ? 2000 : 30000);
+}
+
+async function act(action, name, extra) {
+  if (action === "update" && extra?.major && !confirm(T.confirm_major(name, extra.from, extra.to))) return;
+  const key = action + ":" + (name || "");
+  busyLocal.add(key);
+  render();
+  try {
+    await api(`/api/${action}${name ? "/" + encodeURIComponent(name) : ""}`, "POST");
+    toast(action === "check" ? T.t_check : T["t_" + action](name));
+  } catch (e) {
+    toast(e.message, true);
+  }
+  busyLocal.delete(key);
+  load();
+}
+
+async function updateAll() {
+  const list = data.containers.filter((c) => c.status === "update" && c.can_update && c.kind !== "major" && !c.breaking && !c.job);
+  if (!list.length || !confirm(T.confirm_all(list.length))) return;
+  for (const c of list) {
+    try { await api(`/api/update/${encodeURIComponent(c.name)}`, "POST"); } catch (e) { toast(`${c.name}: ${e.message}`, true); }
+  }
+  toast(T.queued_all(list.length));
+  load();
+}
+
+function versionCell(c) {
+  if (["update", "rebuild", "ignored"].includes(c.status) && c.latest && c.latest !== c.current) {
+    return `<span class="old">${esc(c.current || "?")}</span><span class="arrow">→</span><span class="new">${esc(c.latest)}</span>`;
+  }
+  if (c.current) return `<span class="${c.status === "current" ? "" : "old"}">${esc(c.current)}</span>`;
+  return ["recreate", "other"].includes(c.status) ? "" : `<span class="none">—</span>`;
+}
+
+function jobCell(c) {
+  const j = c.job;
+  if (!j) return "";
+  if (j.state === "queued" || j.state === "running") return `<span class="job"><span class="spin"></span>${esc(j.msg || T.queued)}</span>`;
+  if (j.state === "done") return `<span class="job done">${icon("check")}${esc(j.msg)}</span>`;
+  return `<span class="job failed" data-msg="${esc(j.msg)}" title="${esc(j.msg)}">${icon("x")}<span class="jmsg">${esc(T.failed + j.msg)}</span></span>`;
+}
+
+function actionsCell(c, compact) {
+  const b = [];
+  if (c.job && ["queued", "running"].includes(c.job.state)) return "";
+  const majorInfo = c.kind === "major" ? JSON.stringify({ major: true, from: c.current || "?", to: c.latest || "?" }) : "";
+  if (c.can_update) {
+    b.push(compact
+      ? `<button class="icon-btn" title="${esc(T.b_update)}" data-act="update" data-name="${esc(c.name)}" data-major='${esc(majorInfo)}'>${icon("up")}</button>`
+      : `<button class="btn sm primary" data-act="update" data-name="${esc(c.name)}" data-major='${esc(majorInfo)}'>${icon("up")}${esc(T.b_update)}</button>`);
+  }
+  if (c.can_recreate) b.push(`<button class="btn sm" data-act="recreate" data-name="${esc(c.name)}">${icon("refresh")}${esc(T.b_recreate)}</button>`);
+  if (c.can_rollback && (c.job?.state === "failed" || !compact || c.job?.state === "done"))
+    b.push(`<button class="icon-btn" title="${esc(T.b_rollback_to(c.rollback_to || T.b_prev))}" data-act="rollback" data-name="${esc(c.name)}">${icon("undo")}</button>`);
+  if (c.status === "update" && !compact) b.push(`<button class="icon-btn" title="${esc(T.b_ignore)}" data-act="ignore" data-name="${esc(c.name)}">${icon("mute")}</button>`);
+  if (c.url) b.push(`<a class="icon-btn" title="${esc(T.b_notes_link)}" href="${esc(c.url)}" target="_blank" rel="noopener">${icon("ext")}</a>`);
+  return b.join("");
+}
+
+function card(c) {
+  const isOpen = open.has(c.name);
+  return `<div class="card">
+    <div class="card-top">
+      <div class="who"><b>${esc(c.name)}</b><span class="ref">${esc(c.ref)}</span></div>
+      <div class="ver">${versionCell(c)}${c.kind ? `<span class="pill ${esc(c.kind)}">${esc(kindLabel(c.kind))}</span>` : ""}</div>
+    </div>
+    ${c.breaking ? `<div class="warnline">${icon("warn")}${esc(T.breaking)}</div>` : ""}
+    ${isOpen && c.notes ? `<div class="notes">${esc(c.notes)}</div>` : ""}
+    <div class="card-top" style="margin-top:10px">
+      <div style="flex:1">${c.notes ? `<button class="btn sm ghost" data-toggle="${esc(c.name)}">${icon("notes")}${esc(isOpen ? T.b_hide : T.b_notes)}</button>` : ""}${jobCell(c)}</div>
+      <div class="card-actions">${actionsCell(c, false)}</div>
+    </div>
+  </div>`;
+}
+
+function rowHtml(c) {
+  const sub = c.job ? jobCell(c)
+    : (c.status === "current" || c.status === "update") ? `<span class="ref">${esc(c.ref)}</span>`
+    : `<span class="reason">${esc(REASON[c.status] || c.reason || c.ref)}</span>`;
+  const pill = c.status === "recreate" ? `<span class="pill recreate">${esc(T.p_recreate)}</span>`
+    : c.status === "ignored" ? `<span class="pill ignored">${esc(T.p_ignored)}</span>`
+    : c.kind && c.status === "update" ? `<span class="pill ${esc(c.kind)}">${esc(kindLabel(c.kind))}</span>` : "";
+  return `<div class="row">
+    <span class="dot ${esc(c.status)}" title="${esc(c.status)}"></span>
+    <div class="who"><b>${esc(c.name)}${c.warning ? ` <span class="warn-ic" title="${esc(c.warning)}" data-msg="${esc(c.warning)}">${icon("warn")}</span>` : ""}</b>${sub}</div>
+    <div class="ver">${versionCell(c)}${pill}</div>
+    <div class="actions">${actionsCell(c, true)}</div>
+  </div>`;
+}
+
+function render() {
+  if (!data) return;
+  const cs = data.containers;
+  const updates = cs.filter((c) => c.status === "update");
+  const attention = cs.filter(FILTERS[2][2]);
+
+  $("#sub").textContent = data.checking ? T.checking : T.sub(ago(data.last_check), until(data.next_check));
+  const cb = $("#checkBtn");
+  cb.disabled = data.checking || busyLocal.has("check:");
+  cb.querySelector("span").textContent = data.checking ? T.running : T.check;
+  cb.querySelector("svg").style.animation = data.checking ? "spin 1s linear infinite" : "";
+
+  const watched = cs.filter((c) => !["other", "pending"].includes(c.status)).length;
+  const small = `<small>${esc(T.watched(watched))}${attention.length ? esc(T.attention(attention.length)) : ""}</small>`;
+  $("#summary").innerHTML = updates.length
+    ? `<div class="ring up">${icon("up")}</div><div class="big">${esc(T.n_updates(updates.length))}${small}</div>`
+    : `<div class="ring ok">${icon("check")}</div><div class="big">${esc(T.all_good)}${small}</div>`;
+
+  const safe = updates.filter((c) => c.can_update && c.kind !== "major" && !c.breaking && !c.job);
+  $("#updates").innerHTML = updates.length
+    ? `<div class="bulk"><span class="section-title">${esc(T.available)}</span>${safe.length > 1 ? `<button class="btn sm" id="allBtn">${icon("up")}${esc(T.update_all)}<span class="hide-sm">&nbsp;${esc(T.no_major)}</span></button>` : ""}</div>
+       <div class="cards">${updates.sort((a, b) => (a.kind === "major") - (b.kind === "major") || a.name.localeCompare(b.name)).map(card).join("")}</div>`
+    : "";
+
+  $("#seg").innerHTML = FILTERS.map(([id, label, fn]) => {
+    const n = cs.filter(fn).length;
+    return `<button type="button" class="${filter === id ? "on" : ""}" data-filter="${id}">${esc(label)}<span class="n">${n}</span></button>`;
+  }).join("");
+
+  const fn = (FILTERS.find((f) => f[0] === filter) || FILTERS[0])[2];
+  const q = query.trim().toLowerCase();
+  const shown = cs.filter((c) => fn(c) && (!q || (c.name + " " + c.ref + " " + c.project).toLowerCase().includes(q)));
+  const groups = {};
+  for (const c of shown) (groups[c.project] ||= []).push(c);
+  const names = Object.keys(groups).sort((a, b) => {
+    const score = (g) => Math.min(...groups[g].map((c) => STATUS_ORDER[c.status] ?? 9));
+    return score(a) - score(b) || a.localeCompare(b);
+  });
+  $("#list").innerHTML = names.length ? names.map((g) => {
+    const rows = groups[g].sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || a.name.localeCompare(b.name));
+    return `<section class="group"><div class="group-h"><b>${esc(g)}</b><span>${rows.length}</span></div>${rows.map(rowHtml).join("")}</section>`;
+  }).join("") : `<div class="empty">${esc(T.empty)}</div>`;
+
+  $("#foot").textContent = T.foot(data.check_at);
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-act],[data-filter],[data-toggle],[data-msg],#allBtn");
+  if (!t) return;
+  if (t.dataset.msg) return toast(t.dataset.msg, true);
+  if (t.id === "allBtn") return updateAll();
+  if (t.dataset.filter) {
+    filter = t.dataset.filter;
+    try { localStorage.setItem("updock.filter", filter); } catch (err) {}
+    return render();
+  }
+  if (t.dataset.toggle) {
+    open.has(t.dataset.toggle) ? open.delete(t.dataset.toggle) : open.add(t.dataset.toggle);
+    return render();
+  }
+  let extra = null;
+  try { extra = t.dataset.major ? JSON.parse(t.dataset.major) : null; } catch (err) {}
+  if (t.dataset.act === "rollback" && !confirm(T.confirm_rollback(t.dataset.name))) return;
+  act(t.dataset.act, t.dataset.name, extra);
+});
+$("#sub").textContent = T.loading;
+$("#checkBtn span").textContent = T.check;
+$("#q").placeholder = T.search;
+$("#checkBtn").addEventListener("click", () => act("check"));
+$("#q").addEventListener("input", (e) => { query = e.target.value; render(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+setInterval(() => data && render(), 30000);
+load();
+</script>
+</body>
+</html>

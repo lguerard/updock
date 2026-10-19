@@ -1,0 +1,28 @@
+# updock -- minimal setup. See README.md for every option.
+services:
+  updock:
+    image: ghcr.io/lguerard/updock:latest
+    container_name: updock
+    environment:
+      - TZ=Europe/Paris
+      # ntfy topic your phone subscribes to (keep it secret on ntfy.sh).
+      - UPDOCK_NTFY_TOPIC=change-me-to-a-random-topic
+      # Address your PHONE uses to reach updock (VPN name/IP or LAN IP).
+      - UPDOCK_PUBLIC_URL=http://my-server:8099
+      # Signs the notification buttons: openssl rand -hex 32
+      - UPDOCK_SECRET=change-me
+      # Check once a night, local time.
+      - UPDOCK_CHECK_AT=03:30
+      # Optional: password for the web interface.
+      # - UPDOCK_UI_PASSWORD=
+      # en (default) or fr
+      # - UPDOCK_LANG=en
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+      # Mount the folder(s) holding your compose files AT THE SAME PATH,
+      # read-only: updock re-reads them to update a service.
+      - /opt/stacks:/opt/stacks:ro
+    ports:
+      - "8099:8099"
+    restart: unless-stopped

@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Lint
+        run: pip install pyflakes && python -m pyflakes updock.py
+      - name: Self-test
+        run: python -I updock.py --selftest
+      - name: Interface script parses
+        run: |
+          node -e "const h=require('fs').readFileSync('ui.html','utf8');
+          new Function(h.slice(h.indexOf('<script>')+8,h.indexOf('</script>')));"
