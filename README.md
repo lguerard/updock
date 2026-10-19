@@ -142,10 +142,15 @@ python3 updock.py --selftest     # dependency-free tests
 python3 updock.py --check        # one check, then exit
 ```
 
-The image is built and published by GitHub Actions: every push to `main`
-gives `:edge`. To release, run **Actions → Release → Run workflow** with a
-version (`0.2.0`): it tags `v0.2.0`, publishes `:0.2.0`, `:0.2`, `:0` and
-`:latest`, and creates the GitHub release.
+Commits follow [Conventional Commits](https://www.conventionalcommits.org)
+(`feat(ui): …`, `fix(registry): …`, optionally with a gitmoji after the
+colon): release notes are generated from them by
+[git-cliff](https://git-cliff.org) (`cliff.toml`).
+
+Every push to `main` publishes `:edge`. To release, push a tag
+(`git tag v0.2.0 && git push origin v0.2.0`) or run **Actions → Release → Run
+workflow** with the version: either way you get `:0.2.0`, `:0.2`, `:0`,
+`:latest` and a GitHub release with the changelog.
 
 ## License
 
