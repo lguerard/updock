@@ -88,7 +88,9 @@ header {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
   padding: 12px 12px 12px 14px; box-shadow: var(--shadow);
 }
-.card-top { display: flex; align-items: center; gap: 10px; }
+.card-top { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
+.card .ver { margin-left: auto; }
+html, body { overflow-x: hidden; }
 .card .who { flex: 1; min-width: 0; }
 .card .who b { font-size: 14.5px; }
 .card .who .ref { display: block; }
@@ -135,7 +137,8 @@ header {
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
 .dot.current { background: var(--ok); }
 .dot.update { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.dot.rebuild, .dot.ignored { background: var(--info); opacity: .7; }
+.dot.rebuild { background: var(--ok); }
+.dot.ignored { background: var(--info); opacity: .7; }
 .dot.recreate { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
 .dot.error { background: var(--bad); }
 .dot.other, .dot.pending { background: transparent; border: 1.5px solid var(--faint); }
@@ -294,12 +297,13 @@ document.documentElement.lang = LANG;
 
 const FILTERS = [
   ["all", T.f_all, () => true],
-  ["updates", T.f_updates, (c) => ["update", "rebuild", "ignored"].includes(c.status)],
+  ["updates", T.f_updates, (c) => ["update", "ignored"].includes(c.status)],
   ["attention", T.f_attention, (c) => ["recreate", "error"].includes(c.status) || c.job?.state === "failed"],
-  ["current", T.f_current, (c) => c.status === "current"],
+  // A rebuild with the same version IS up to date: it only shows a badge.
+  ["current", T.f_current, (c) => ["current", "rebuild"].includes(c.status)],
   ["other", T.f_other, (c) => ["other", "pending"].includes(c.status)],
 ];
-const STATUS_ORDER = { update: 0, recreate: 1, error: 2, rebuild: 3, ignored: 4, current: 5, pending: 6, other: 7 };
+const STATUS_ORDER = { update: 0, recreate: 1, error: 2, ignored: 3, current: 4, rebuild: 4, pending: 6, other: 7 };
 const kindLabel = (k) => T["k_" + k] || k;
 const REASON = { rebuild: T.r_rebuild, ignored: T.r_ignored };
 
@@ -436,10 +440,11 @@ function card(c) {
 
 function rowHtml(c) {
   const sub = c.job ? jobCell(c)
-    : (c.status === "current" || c.status === "update") ? `<span class="ref">${esc(c.ref)}</span>`
+    : ["current", "update", "rebuild"].includes(c.status) ? `<span class="ref">${esc(c.ref)}</span>`
     : `<span class="reason">${esc(REASON[c.status] || c.reason || c.ref)}</span>`;
   const pill = c.status === "recreate" ? `<span class="pill recreate">${esc(T.p_recreate)}</span>`
     : c.status === "ignored" ? `<span class="pill ignored">${esc(T.p_ignored)}</span>`
+    : c.status === "rebuild" ? `<span class="pill rebuild" title="${esc(T.r_rebuild)}">${esc(kindLabel("rebuild"))}</span>`
     : c.kind && c.status === "update" ? `<span class="pill ${esc(c.kind)}">${esc(kindLabel(c.kind))}</span>` : "";
   return `<div class="row">
     <span class="dot ${esc(c.status)}" title="${esc(c.status)}"></span>
