@@ -428,12 +428,36 @@ def version_of(config, repo):
     return env_version(config, repo) or label_version(config)
 
 
-def resolve_version(config, repo, releases, created):
+def _stable(releases):
+    return [r for r in releases if not r.get("prerelease")
+            and not is_prerelease(r.get("tag_name"))]
+
+
+def plausible_label(label, releases):
+    """A label missing from the release list is still trusted when it is
+    the NEXT version of the project: same major as its newest stable
+    release, and higher. That is a release published after the list was
+    fetched (or not published on GitHub yet). A base image's version
+    (Ollama's "24.04" next to v0.x releases) fails the major check."""
+    stable = _stable(releases)
+    if not label or not stable or is_prerelease(label):
+        return False
+    newest = max(stable, key=lambda r: numbers(r.get("tag_name")))
+    a, b = numbers(label), numbers(newest.get("tag_name"))
+    return bool(a and b) and a[0] == b[0] and a > b
+
+
+def resolve_version(config, repo, releases, created, refresh=None):
     """(version, how) for an image, cross-checked against GitHub releases.
 
     1. env var -- exact, set by the image itself;
-    2. label, if it matches a real release tag of the project;
-    3. the newest stable release published before the image was built;
+    2. label, if it matches a real release tag of the project (re-read the
+       release list once if it does not: it may predate the release), or
+       if it is plausibly the project's next version;
+    3. the newest stable release whose COMMIT predates the image build.
+       GitHub's ``created_at`` is the date of the release's commit, while
+       ``published_at`` is often later than the image: projects build their
+       images first and publish the release afterwards;
     4. label unverified, only when the project's releases are unknown.
     """
     version = env_version(config, repo)
@@ -442,14 +466,14 @@ def resolve_version(config, repo, releases, created):
     label = label_version(config)
     if not releases:
         return label, "label"
-    if label and find_release(releases, label):
+    if label and not find_release(releases, label) and refresh:
+        releases = refresh() or releases
+    if label and (find_release(releases, label) or plausible_label(label, releases)):
         return label, "label"
     built = (created or "")[:19]
-    for rel in sorted(releases, key=lambda r: r.get("published_at") or "",
-                      reverse=True):
-        if rel.get("prerelease") or is_prerelease(rel.get("tag_name")):
-            continue
-        if built and (rel.get("published_at") or "")[:19] <= built:
+    when = lambda r: (r.get("created_at") or r.get("published_at") or "")[:19]
+    for rel in sorted(_stable(releases), key=when, reverse=True):
+        if built and when(rel) <= built:
             return rel["tag_name"], "github"
     return None, "unknown"
 
@@ -498,11 +522,14 @@ def github_repo(labels, image_labels, registry, repo):
     return m.group(1).removesuffix(".git") if m else None
 
 
-def github_releases(gh_repo):
+def github_releases(gh_repo, max_age=None):
     """Recent releases, cached 6 h (1 h after a failure): unauthenticated
-    GitHub allows 60 requests an hour."""
+    GitHub allows 60 requests an hour. ``max_age`` (seconds) asks for a
+    fresher list -- used when an image announces a version the cached list
+    does not know yet."""
     cached = _gh_cache.get(gh_repo)
-    if cached and time.time() < cached[0]:
+    if cached and time.time() < cached[0] and \
+            (max_age is None or time.time() - cached[2] < max_age):
         return cached[1]
     headers = {"Accept": "application/vnd.github+json",
                "User-Agent": "updock"}
@@ -514,7 +541,8 @@ def github_releases(gh_repo):
     if status != 200:
         log(f"github {gh_repo}: HTTP {status}")
     releases = [r for r in releases if not r.get("draft")]
-    _gh_cache[gh_repo] = (time.time() + (6 if status == 200 else 1) * 3600, releases)
+    _gh_cache[gh_repo] = (time.time() + (6 if status == 200 else 1) * 3600,
+                          releases, time.time())
     return releases
 
 
@@ -727,13 +755,18 @@ def release_url(gh, release):
     return f"https://github.com/{gh}/releases" if gh else None
 
 
+def _refresher(gh):
+    """Re-read a repo's releases if the cached list is over 15 min old."""
+    return (lambda: github_releases(gh, max_age=900)) if gh else None
+
+
 def current_result(entry, gh):
     """Result for a container already on the newest image of its tag."""
     releases = []
     if gh and not env_version(entry["config"], entry["repo"]):
         releases = github_releases(gh)  # to verify (or replace) the label
     version, _ = resolve_version(entry["config"], entry["repo"], releases,
-                                 entry["created"])
+                                 entry["created"], _refresher(gh))
     release = find_release(releases, version) if version and releases else None
     return {"status": "current", "current": version, "latest": version,
             "github": gh, "url": release_url(gh, release)}
@@ -743,9 +776,10 @@ def assess(entry, remote_digest, remote_config, gh):
     """Result for a container whose tag now points elsewhere."""
     releases = github_releases(gh) if gh else []
     old, how_old = resolve_version(entry["config"], entry["repo"], releases,
-                                   entry["created"])
+                                   entry["created"], _refresher(gh))
     new, how_new = resolve_version(remote_config, entry["repo"], releases,
-                                   remote_config.get("created"))
+                                   remote_config.get("created"), _refresher(gh))
+    releases = github_releases(gh) if gh else []  # possibly refreshed above
     if not new:
         kind = "unknown"
     elif not old:
@@ -1078,6 +1112,9 @@ def row(entry, res, state):
         out.update(current=pretty(res.get("current")) or out["current"],
                    latest=pretty(res.get("latest")), url=res.get("url"),
                    status=res["status"])
+        if out["latest"] and out["current"] and \
+                norm_tag(out["latest"]) == norm_tag(out["current"]):
+            out["latest"] = out["current"]  # "1.4.0" vs "v1.4.0"
         if res["status"] in ("update", "rebuild"):
             if res.get("digest") in entry.get("digests", []):
                 out.update(status="current", latest=out["current"])  # done since
@@ -1252,6 +1289,24 @@ def selftest():
     assert resolve_version(ollama, "ollama/ollama", [], "x") == ("24.04", "label")
     good = {"config": {"Labels": {"org.opencontainers.image.version": "0.12.9"}}}
     assert resolve_version(good, "ollama/ollama", rels, "2030")[1] == "label"
+    # Image built before the release was published: the commit date counts.
+    immich = [{"tag_name": "v3.3.5", "created_at": "2026-10-20T08:00:00Z",
+               "published_at": "2026-10-20T14:00:00Z"},
+              {"tag_name": "v3.3.4", "created_at": "2026-10-10T08:00:00Z",
+               "published_at": "2026-10-10T12:00:00Z"}]
+    bare = {"config": {}}
+    assert resolve_version(bare, "immich-app/immich-server", immich,
+                           "2026-10-20T09:30:00Z")[0] == "v3.3.5"
+    assert resolve_version(bare, "immich-app/immich-server", immich,
+                           "2026-10-15T00:00:00Z")[0] == "v3.3.4"
+    # A label newer than the cached list: refreshed list, else plausibility.
+    shelf = {"config": {"Labels": {"org.opencontainers.image.version": "1.5.0"}}}
+    old_list = [{"tag_name": "v1.4.0", "created_at": "2026-09-01T00:00:00Z"}]
+    assert resolve_version(shelf, "calibrain/shelfmark", old_list, "2026-10-20")[0] == "1.5.0"
+    assert resolve_version(shelf, "calibrain/shelfmark", old_list, "2026-10-20",
+                           lambda: [{"tag_name": "v1.5.0"}] + old_list) == ("1.5.0", "label")
+    assert not plausible_label("24.04", [{"tag_name": "v0.13.0"}])
+    assert not plausible_label("2.0.0", [{"tag_name": "v1.9.0"}])
     rels = [{"tag_name": "v2.1.0", "body": "x"}, {"tag_name": "v2.0.0", "body": "y"}]
     assert find_release(rels, "2.0.0")["body"] == "y"
     assert find_release([{"tag_name": "4.0.20.3014-ls329"}], "4.0.20.3014-ls329")
