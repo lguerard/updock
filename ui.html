@@ -176,6 +176,20 @@ html, body { overflow-x: hidden; }
 .warn-ic svg { width: 13px; height: 13px; }
 .empty { text-align: center; color: var(--muted); padding: 36px 12px; }
 .foot { color: var(--faint); font-size: 12px; text-align: center; padding: 18px 0 30px; }
+.foot button { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 0 0 0 4px; }
+.sched { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; margin: 4px 0 18px; box-shadow: var(--shadow); }
+.sched h3 { margin: 0 0 4px; font-size: 14px; }
+.sched > p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+.opts { display: grid; gap: 6px; }
+.opt { display: grid; grid-template-columns: 18px 1fr; gap: 2px 10px; align-items: start; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.opt:hover { border-color: var(--faint); }
+.opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.opt input { margin: 2px 0 0; accent-color: var(--accent); }
+.opt b { font-size: 13.5px; font-weight: 600; }
+.opt b em { font-style: normal; font-size: 11px; font-weight: 650; color: var(--ok); margin-left: 6px; text-transform: uppercase; letter-spacing: .03em; }
+.opt span { grid-column: 2; color: var(--muted); font-size: 12px; }
+.opt .custom { grid-column: 2; margin-top: 6px; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); padding: 0 10px; font: 12.5px var(--mono); width: 100%; }
+.sched-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
 /* toast */
 .toast {
@@ -227,6 +241,7 @@ html, body { overflow-x: hidden; }
     <input class="search" id="q" type="search" autocomplete="off">
   </div>
   <div id="list"></div>
+  <div id="schedPanel"></div>
   <div class="foot" id="foot"></div>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -261,7 +276,15 @@ const I18N = {
     n_updates: (n) => `${n} update${n > 1 ? "s" : ""} available`, all_good: "Everything is up to date",
     watched: (n) => `${n} containers watched`, attention: (n) => ` · ${n} need${n > 1 ? "" : "s"} attention`,
     available: "Available", update_all: "Update all", no_major: "(major excluded)",
-    empty: "No container here.", foot: (t) => `Automatic check every day at ${t}`,
+    empty: "No container here.", foot: (t) => `Automatic checks: ${t}`, change: "Change",
+    sched_title: "Check frequency", sched_help: "When updock asks the registries for new releases. Notifications arrive at these times.",
+    custom: "Custom", custom_help: "Comma-separated: 03:30 (every day), sun 03:30 (every Sunday), every 6h.",
+    cancel: "Cancel", save: "Save", saved: "Frequency saved", recommended: "recommended",
+    p_night: ["Every night", "03:30 — notifications are waiting when you wake up. Plenty for home servers."],
+    p_twice: ["Morning and evening", "07:00 and 19:00 — a fix released during the day reaches you the same evening."],
+    p_6h: ["Every 6 hours", "03:30, 09:30, 15:30, 21:30 — to follow projects that release often."],
+    p_1h: ["Every hour", "At :30 — closest follow-up; a notification can arrive at any time of day."],
+    p_week: ["Once a week", "Sunday 03:30 — the quietest: at most one round of notifications a week."],
     confirm_rollback: (n) => `Roll ${n} back to the previous version?`,
   },
   fr: {
@@ -286,7 +309,15 @@ const I18N = {
     n_updates: (n) => `${n} mise${n > 1 ? "s" : ""} à jour disponible${n > 1 ? "s" : ""}`, all_good: "Tout est à jour",
     watched: (n) => `${n} conteneurs suivis`, attention: (n) => ` · ${n} à traiter`,
     available: "Disponibles", update_all: "Tout mettre à jour", no_major: "(hors majeures)",
-    empty: "Aucun conteneur ici.", foot: (t) => `Vérification automatique chaque jour à ${t}`,
+    empty: "Aucun conteneur ici.", foot: (t) => `Vérification automatique : ${t}`, change: "Modifier",
+    sched_title: "Fréquence de vérification", sched_help: "Quand updock interroge les registres. Les notifications arrivent à ces moments-là.",
+    custom: "Personnalisée", custom_help: "Séparées par des virgules : 03:30 (chaque jour), dim 03:30 (chaque dimanche), every 6h.",
+    cancel: "Annuler", save: "Enregistrer", saved: "Fréquence enregistrée", recommended: "recommandé",
+    p_night: ["Chaque nuit", "03:30 — les notifications t'attendent au réveil. Largement suffisant pour un serveur maison."],
+    p_twice: ["Matin et soir", "07:00 et 19:00 — un correctif sorti dans la journée t'arrive le soir même."],
+    p_6h: ["Toutes les 6 heures", "03:30, 09:30, 15:30, 21:30 — pour suivre de près les projets qui publient souvent."],
+    p_1h: ["Toutes les heures", "À la demie — le suivi le plus serré ; une notification peut tomber à toute heure."],
+    p_week: ["Une fois par semaine", "Dimanche 03:30 — le plus calme : une seule salve de notifications par semaine."],
     confirm_rollback: (n) => `Revenir à la version précédente de ${n} ?`,
   },
 };
@@ -305,6 +336,14 @@ const FILTERS = [
 ];
 const STATUS_ORDER = { update: 0, recreate: 1, error: 2, ignored: 3, current: 4, rebuild: 4, pending: 6, other: 7 };
 const kindLabel = (k) => T["k_" + k] || k;
+const PRESETS = [["03:30", "p_night", true], ["07:00, 19:00", "p_twice"], ["every 6h", "p_6h"],
+                 ["every 1h", "p_1h"], ["sun 03:30", "p_week"]];
+const sameSpec = (a, b) => String(a).replace(/\s+/g, "").toLowerCase() === String(b).replace(/\s+/g, "").toLowerCase();
+const presetOf = (spec) => PRESETS.find(([v]) => sameSpec(v, spec));
+const scheduleLabel = (spec) => { const p = presetOf(spec); return p ? T[p[1]][0].toLowerCase() + (p[0] === "03:30" ? " (03:30)" : "") : spec; };
+let schedOpen = false;
+let schedChoice = null;
+let schedCustom = "";
 const REASON = { rebuild: T.r_rebuild, ignored: T.r_ignored };
 
 let data = null;
@@ -497,10 +536,54 @@ function render() {
     return `<section class="group"><div class="group-h"><b>${esc(g)}</b><span>${rows.length}</span></div>${rows.map(rowHtml).join("")}</section>`;
   }).join("") : `<div class="empty">${esc(T.empty)}</div>`;
 
-  $("#foot").textContent = T.foot(data.check_at);
+  $("#foot").innerHTML = `${esc(T.foot(scheduleLabel(data.schedule)))}<button type="button" id="schedBtn">${esc(T.change)}</button>`;
+  if (!schedOpen) renderSchedule();  // an open panel is left alone: typing must not be interrupted by a refresh
 }
 
+function renderSchedule() {
+  const el = $("#schedPanel");
+  if (!schedOpen) { el.innerHTML = ""; return; }
+  if (schedChoice === null) {
+    const p = presetOf(data.schedule);
+    schedChoice = p ? p[0] : "custom";
+    schedCustom = p ? "" : data.schedule;
+  }
+  const opt = (value, title, help, rec) => `<label class="opt${schedChoice === value ? " on" : ""}">
+      <input type="radio" name="sched" value="${esc(value)}"${schedChoice === value ? " checked" : ""}>
+      <b>${esc(title)}${rec ? `<em>${esc(T.recommended)}</em>` : ""}</b><span>${esc(help)}</span></label>`;
+  el.innerHTML = `<section class="sched"><h3>${esc(T.sched_title)}</h3><p>${esc(T.sched_help)}</p>
+    <div class="opts">${PRESETS.map(([v, k, rec]) => opt(v, T[k][0], T[k][1], rec)).join("")}
+      <label class="opt${schedChoice === "custom" ? " on" : ""}"><input type="radio" name="sched" value="custom"${schedChoice === "custom" ? " checked" : ""}>
+        <b>${esc(T.custom)}</b><span>${esc(T.custom_help)}</span>
+        <input class="custom" id="schedCustom" value="${esc(schedCustom)}" placeholder="03:30, 15:30" autocomplete="off"></label></div>
+    <div class="sched-actions"><button type="button" class="btn sm ghost" id="schedCancel">${esc(T.cancel)}</button>
+      <button type="button" class="btn sm primary" id="schedSave">${esc(T.save)}</button></div></section>`;
+}
+
+async function saveSchedule() {
+  const spec = schedChoice === "custom" ? schedCustom.trim() : schedChoice;
+  try {
+    const r = await fetch("/api/schedule", { method: "POST", headers: { "X-Updock": "1", "Content-Type": "application/json" },
+                                             body: JSON.stringify({ schedule: spec }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    schedOpen = false; schedChoice = null;
+    toast(T.saved);
+    load();
+  } catch (e) { toast(e.message, true); }
+}
+
+document.addEventListener("change", (e) => {
+  if (e.target.name === "sched") { schedChoice = e.target.value; renderSchedule(); }
+});
+document.addEventListener("input", (e) => {
+  if (e.target.id === "schedCustom") { schedCustom = e.target.value; if (schedChoice !== "custom") { schedChoice = "custom"; renderSchedule(); $("#schedCustom").focus(); } }
+});
+
 document.addEventListener("click", (e) => {
+  if (e.target.closest("#schedBtn")) { schedOpen = !schedOpen; schedChoice = null; renderSchedule(); if (schedOpen) $("#schedPanel").scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+  if (e.target.closest("#schedCancel")) { schedOpen = false; schedChoice = null; return renderSchedule(); }
+  if (e.target.closest("#schedSave")) return saveSchedule();
   const t = e.target.closest("[data-act],[data-filter],[data-toggle],[data-msg],#allBtn");
   if (!t) return;
   if (t.dataset.msg) return toast(t.dataset.msg, true);

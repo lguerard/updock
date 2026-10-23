@@ -1,6 +1,7 @@
 """updock -- real releases for your Docker containers, one tap to update.
 
-Every night (``UPDOCK_CHECK_AT``, local time) updock looks at each running
+Every night by default (``UPDOCK_CHECK_AT``, local time, or the frequency
+chosen in the web interface) updock looks at each running
 container that came from a registry and asks the registry what its tag --
 usually ``latest`` -- points to *now*. A changed digest alone means nothing
 (images are rebuilt all the time), so updock works out the **version** on
@@ -59,7 +60,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 NTFY_URL = os.environ.get("UPDOCK_NTFY_URL", "https://ntfy.sh").rstrip("/")
@@ -68,7 +69,7 @@ NTFY_TOKEN = os.environ.get("UPDOCK_NTFY_TOKEN", "")
 SECRET = os.environ.get("UPDOCK_SECRET", "").encode()
 PUBLIC_URL = os.environ.get("UPDOCK_PUBLIC_URL", "").rstrip("/")
 PORT = int(os.environ.get("UPDOCK_PORT", "8099"))
-CHECK_AT = os.environ.get("UPDOCK_CHECK_AT", "03:30")  # "HH:MM[,HH:MM...]", local time
+CHECK_AT = os.environ.get("UPDOCK_CHECK_AT", "03:30")  # default schedule, see parse_schedule
 CHECK_ON_START = os.environ.get("UPDOCK_CHECK_ON_START", "true").lower() == "true"
 GITHUB_TOKEN = os.environ.get("UPDOCK_GITHUB_TOKEN", "")
 NOTIFY_REBUILDS = os.environ.get("UPDOCK_NOTIFY_REBUILDS", "false").lower() == "true"
@@ -190,6 +191,8 @@ MESSAGES = {
     "api.unknown": ("unknown action", "action inconnue"),
     "api.nothing": ("nothing to ignore", "rien à ignorer"),
     "api.busy": ("an action is already running", "une action est déjà en cours"),
+    "api.bad_schedule": ("Invalid frequency. Examples: 03:30 · sun 03:30 · every 6h (1, 2, 3, 4, 6, 8 or 12 h).",
+                         "Fréquence invalide. Exemples : 03:30 · dim 03:30 · every 6h (1, 2, 3, 4, 6, 8 ou 12 h)."),
     "link.invalid": ("invalid, expired or already used link",
                      "lien invalide, expiré ou déjà utilisé"),
     "link.update": ("update of {name} started", "mise à jour de {name} lancée"),
@@ -1133,12 +1136,14 @@ def api_state():
     state = load_state()
     results = state.get("results", {})
     rows = [row(e, results.get(e["name"]), state) for e in inspect_containers()]
+    schedule = current_schedule(state)
     try:
-        nxt = round((time.time() + seconds_until_next(check_times(CHECK_AT),
+        nxt = round((time.time() + seconds_until_next(parse_schedule(schedule),
                                                        datetime.now())) / 60) * 60
     except ValueError:
         nxt = None
-    return {"check_at": CHECK_AT, "last_check": state.get("last_check"),
+    return {"schedule": schedule, "schedule_default": CHECK_AT,
+            "last_check": state.get("last_check"),
             "next_check": nxt, "checking": _check_lock.locked(),
             "containers": sorted(rows, key=lambda r: (r["project"], r["name"]))}
 
@@ -1214,6 +1219,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("X-Updock") != "1":
             return self._json(403, {"error": _("api.header")})
         action = parts[0] if parts else ""
+        if action == "schedule" and len(parts) == 1:
+            return self._set_schedule()
         if action == "check" and len(parts) == 1:
             if _check_lock.locked():
                 return self._json(409, {"error": _("api.checking")})
@@ -1236,6 +1243,29 @@ class Handler(BaseHTTPRequestHandler):
         if not start_job(target, name):
             return self._json(409, {"error": _("api.busy")})
         return self._json(202, {"ok": True})
+
+    def _set_schedule(self):
+        """{"schedule": "03:30"} -- empty string = back to UPDOCK_CHECK_AT."""
+        try:
+            size = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(min(size, 2048)) or b"{}")
+            spec = body.get("schedule", "") if isinstance(body, dict) else ""
+            spec = ", ".join(p.strip() for p in str(spec).split(",") if p.strip())
+            if spec:
+                parse_schedule(spec)
+        except ValueError as exc:  # also covers bad JSON
+            log(f"rejected schedule: {exc}")
+            return self._json(400, {"error": _("api.bad_schedule")})
+        with _state_lock:
+            state = load_state()
+            if spec and spec != CHECK_AT:
+                state["schedule"] = spec
+            else:
+                state.pop("schedule", None)
+            save_state(state)
+        _schedule_changed.set()
+        log(f"schedule set to {current_schedule()}")
+        return self._json(200, {"ok": True, "schedule": current_schedule()})
 
     def _ntfy_button(self, action, token):
         with _state_lock:
@@ -1327,34 +1357,80 @@ def selftest():
     assert pretty(None) is None and pretty("pg16") == "pg16"
     assert "Docker Hub" in friendly_error("x 429 Too Many Requests")
     assert friendly_error("a\nError: boom\n") == "Error: boom"
-    assert check_times("3:30, 15:00") == [(3, 30), (15, 0)]
-    night = datetime(2026, 10, 19, 23, 0)
-    assert seconds_until_next([(3, 30)], night) == 4.5 * 3600
-    assert seconds_until_next([(3, 30)], datetime(2026, 10, 19, 3, 0)) == 1800
-    assert seconds_until_next([(3, 30), (15, 0)], datetime(2026, 10, 19, 4, 0)) == 11 * 3600
+    assert parse_schedule("3:30, 15:00") == [(None, 3, 30), (None, 15, 0)]
+    night = datetime(2026, 10, 19, 23, 0)  # a Monday
+    assert seconds_until_next(parse_schedule("03:30"), night) == 4.5 * 3600
+    assert seconds_until_next(parse_schedule("03:30"), datetime(2026, 10, 19, 3, 0)) == 1800
+    assert seconds_until_next(parse_schedule("03:30,15:00"), datetime(2026, 10, 19, 4, 0)) == 11 * 3600
+    assert [h for _, h, _ in parse_schedule("every 6h")] == [3, 9, 15, 21]
+    assert len(parse_schedule("1h")) == 24 and parse_schedule("toutes les 12h")[0] == (None, 3, 30)
+    # Sunday 03:30 seen from Monday 23:00: 5 days + 4.5 h
+    assert seconds_until_next(parse_schedule("sun 03:30"), night) == 5 * 86400 + 4.5 * 3600
+    assert parse_schedule("dim 03:30") == parse_schedule("sun 03:30")
+    for bad in ("", "25:00", "every 5h", "xyz 03:30", "noon"):
+        try:
+            parse_schedule(bad)
+            raise AssertionError(bad)
+        except ValueError:
+            pass
     print("selftest ok")
 
 
-def check_times(spec):
-    """'03:30, 15:00' -> [(3, 30), (15, 0)]."""
-    times = []
-    for part in spec.split(","):
-        m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", part)
-        if not m or int(m[1]) > 23 or int(m[2]) > 59:
-            raise ValueError(f"CHECK_AT: invalid time {part!r} (expected HH:MM)")
-        times.append((int(m[1]), int(m[2])))
-    return sorted(times)
+DAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
+        "lun": 0, "mar": 1, "mer": 2, "jeu": 3, "ven": 4, "sam": 5, "dim": 6}
+EVERY = re.compile(r"(?:every\s+|toutes\s+les\s+)?(\d{1,2})\s*h", re.I)
 
 
-def seconds_until_next(times, now):
-    """Seconds from ``now`` (a local datetime) to the next scheduled time."""
-    today = now.replace(second=0, microsecond=0)
-    for h, m in times + [(t[0] + 24, t[1]) for t in times]:
-        day, hour = divmod(h, 24)
-        at = today.replace(hour=hour, minute=m).timestamp() + day * 86400
-        if at > now.timestamp():
-            return at - now.timestamp()
-    return 86400.0
+def parse_schedule(spec):
+    """Check schedule -> sorted [(weekday or None, hour, minute)].
+
+    Comma-separated items, local time:
+      03:30          every day at 03:30
+      sun 03:30      every Sunday (mon..sun, or lun..dim)
+      every 6h       every 6 hours, at 03:30, 09:30, 15:30, 21:30
+                     (1, 2, 3, 4, 6, 8 or 12 hours, from 03:30)
+    """
+    slots = []
+    for part in (spec or "").split(","):
+        part = part.strip().lower()
+        m = EVERY.fullmatch(part)
+        if m:
+            n = int(m[1])
+            if n not in (1, 2, 3, 4, 6, 8, 12):
+                raise ValueError(f"schedule: every {n}h does not divide a day "
+                                 "(1, 2, 3, 4, 6, 8 or 12)")
+            slots += [(None, (3 + k * n) % 24, 30) for k in range(24 // n)]
+            continue
+        m = re.fullmatch(r"(?:([a-z]{3})\s+)?(\d{1,2}):(\d{2})", part)
+        if not m or (m[1] and m[1] not in DAYS) or int(m[2]) > 23 or int(m[3]) > 59:
+            raise ValueError(f"schedule: invalid item {part!r} "
+                             "(expected HH:MM, 'sun HH:MM' or 'every 6h')")
+        slots.append((DAYS[m[1]] if m[1] else None, int(m[2]), int(m[3])))
+    if not slots:
+        raise ValueError("schedule: empty")
+    return sorted(set(slots), key=lambda t: (t[1], t[2], -1 if t[0] is None else t[0]))
+
+
+def seconds_until_next(slots, now):
+    """Seconds from ``now`` (a local datetime) to the next scheduled slot."""
+    base = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    best = None
+    for day in range(8):
+        for dow, h, m in slots:
+            at = (base + timedelta(days=day)).replace(hour=h, minute=m)
+            if (dow is None or at.weekday() == dow) and at > now:
+                gap = (at - now).total_seconds()
+                best = gap if best is None else min(best, gap)
+    return best if best is not None else 86400.0
+
+
+def current_schedule(state=None):
+    """The schedule chosen in the web interface, else UPDOCK_CHECK_AT."""
+    state = state if state is not None else load_state()
+    return state.get("schedule") or CHECK_AT
+
+
+_schedule_changed = threading.Event()
 
 
 def main():
@@ -1366,8 +1442,8 @@ def main():
         sys.exit("UPDOCK_SECRET and UPDOCK_PUBLIC_URL are required")
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    times = check_times(CHECK_AT)
-    log(f"listening on :{PORT}, checking daily at {CHECK_AT} ({time.tzname[0]})")
+    parse_schedule(CHECK_AT)  # fail fast on a bad UPDOCK_CHECK_AT
+    log(f"listening on :{PORT}, checks: {current_schedule()} ({time.tzname[0]})")
     # A release already notified is never notified again (state.json), so a
     # restart only rings for what is genuinely new since the last check.
     if CHECK_ON_START:
@@ -1376,9 +1452,16 @@ def main():
         except Exception as exc:
             log(f"check failed: {exc}")
     while True:
-        wait = seconds_until_next(times, datetime.now())
+        try:
+            slots = parse_schedule(current_schedule())
+        except ValueError as exc:
+            log(f"{exc} -- falling back to UPDOCK_CHECK_AT")
+            slots = parse_schedule(CHECK_AT)
+        wait = seconds_until_next(slots, datetime.now())
         log(f"next check in {wait / 3600:.1f} h")
-        time.sleep(wait)
+        if _schedule_changed.wait(wait):  # changed from the web interface
+            _schedule_changed.clear()
+            continue
         try:
             check_once()
         except Exception as exc:

@@ -60,6 +60,7 @@ services:
 1. Subscribe to your topic in the [ntfy](https://ntfy.sh) app.
 2. `docker compose up -d`, then open `http://my-server:8099`.
 3. That's it: updock checks every night at 03:30 and right after it starts.
+   Change the frequency any time from the interface (**Change**, at the bottom).
 
 > **Mount your compose folders at the same path.** To update a service, updock
 > runs `docker compose pull` and `up -d` with the compose files recorded in the
@@ -97,7 +98,7 @@ watch a lot of containers).
 | `UPDOCK_NTFY_TOKEN` | *(empty)* | ntfy access token, for a protected topic. |
 | `UPDOCK_PUBLIC_URL` | **required** | Address your phone uses to reach updock when you tap a button: VPN name/IP (Tailscale, WireGuard…) or LAN IP. |
 | `UPDOCK_SECRET` | **required** | Signs the notification buttons. `openssl rand -hex 32`. |
-| `UPDOCK_CHECK_AT` | `03:30` | Check time(s), local time (`TZ`). Several: `03:30,13:00`. |
+| `UPDOCK_CHECK_AT` | `03:30` | Default check schedule, local time (`TZ`): see [Check frequency](#check-frequency). The interface can override it. |
 | `UPDOCK_CHECK_ON_START` | `true` | Also check when the container starts. A release is never notified twice. |
 | `UPDOCK_UI_PASSWORD` | *(empty)* | Password for the web interface (HTTP Basic). |
 | `UPDOCK_LANG` | `en` | `en` or `fr`, for notifications and the interface. |
@@ -113,6 +114,26 @@ Container labels:
 | `updock.github=owner/repo` | Read releases from this GitHub repository. |
 
 To check right now from a shell: `docker exec updock python3 /app/updock.py --check`.
+
+## Check frequency
+
+Pick it in the web interface (**Change** at the bottom of the page): the new
+schedule applies at once, no restart, and survives restarts (it is stored in
+`/data`). `UPDOCK_CHECK_AT` is only the default.
+
+| Preset | Schedule | When it fits |
+|---|---|---|
+| **Every night** *(recommended)* | `03:30` | Notifications are waiting when you wake up. Plenty for a home server. |
+| Morning and evening | `07:00, 19:00` | A fix released during the day reaches you the same evening. |
+| Every 6 hours | `every 6h` | Projects that release often. |
+| Every hour | `every 1h` | Closest follow-up; a notification can arrive at any time. |
+| Once a week | `sun 03:30` | The quietest: at most one round of notifications a week. |
+
+Custom schedules combine comma-separated items: `03:30` (every day),
+`sun 03:30` (a weekday: `mon`…`sun`, or `lun`…`dim`), `every Nh` (N = 1, 2, 3,
+4, 6, 8 or 12, from 03:30). Checking often is cheap: the registry is asked
+with `HEAD` requests, which Docker Hub does not count, and GitHub answers are
+cached for 6 hours.
 
 ## What updock never does
 
