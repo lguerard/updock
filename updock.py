@@ -782,6 +782,14 @@ def assess(entry, remote_digest, remote_config, gh):
                                    entry["created"], _refresher(gh))
     new, how_new = resolve_version(remote_config, entry["repo"], releases,
                                    remote_config.get("created"), _refresher(gh))
+    if gh and how_new in ("github", "unknown") and (not new or norm_tag(new) == norm_tag(old)):
+        # A new image that looks like a rebuild is often a release the cached
+        # list (6 h) does not know yet: projects push the image, then publish
+        # the release. Re-read the list once before calling it a rebuild.
+        fresh = github_releases(gh, max_age=900)
+        if fresh is not releases:
+            new, how_new = resolve_version(remote_config, entry["repo"], fresh,
+                                           remote_config.get("created"))
     releases = github_releases(gh) if gh else []  # possibly refreshed above
     if not new:
         kind = "unknown"
@@ -1317,6 +1325,21 @@ def selftest():
     assert resolve_version(ollama, "ollama/ollama", rels, "2026-10-17T00:46:34Z") == ("v0.13.0", "github")
     assert resolve_version(ollama, "ollama/ollama", rels, "2026-10-05T00:00:00Z") == ("v0.12.9", "github")
     assert resolve_version(ollama, "ollama/ollama", [], "x") == ("24.04", "label")
+    # A new image while the cached release list predates its release: re-read
+    # once, and it is an update, not a rebuild.
+    old_list = [{"tag_name": "v0.13.0", "created_at": "2026-08-12T10:00:00Z"}]
+    new_list = [{"tag_name": "v0.13.1", "created_at": "2026-10-27T09:00:00Z"}] + old_list
+    now = time.time()
+    _gh_cache["seanmorley15/AdventureLog"] = (now + 3600, old_list, now - 3600)
+    _saved = http_req
+    globals()["http_req"] = lambda *a, **k: (200, {}, json.dumps(new_list).encode())
+    try:
+        entry = {"config": {}, "repo": "seanmorley15/adventurelog", "created": "2026-08-12T12:00:00Z"}
+        res = assess(entry, "sha256:new", {"created": "2026-10-27T09:30:00Z"}, "seanmorley15/AdventureLog")
+    finally:
+        globals()["http_req"] = _saved
+        _gh_cache.pop("seanmorley15/AdventureLog", None)
+    assert (res["status"], res["current"], res["latest"], res["kind"]) == ("update", "v0.13.0", "v0.13.1", "patch"), res
     good = {"config": {"Labels": {"org.opencontainers.image.version": "0.12.9"}}}
     assert resolve_version(good, "ollama/ollama", rels, "2030")[1] == "label"
     # Image built before the release was published: the commit date counts.
