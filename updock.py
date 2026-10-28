@@ -436,6 +436,18 @@ def _stable(releases):
             and not is_prerelease(r.get("tag_name"))]
 
 
+def is_pre(version, releases):
+    """Pre-release by its name (-beta, -rc, nightly...) OR because GitHub
+    flags its release as one, whatever its name ("v2.0.0" marked pre-release):
+    never announced as an update to someone on a stable version."""
+    if not version:
+        return False
+    if is_prerelease(version):
+        return True
+    rel = find_release(releases or [], version)
+    return bool(rel and rel.get("prerelease"))
+
+
 def plausible_label(label, releases):
     """A label missing from the release list is still trusted when it is
     the NEXT version of the project: same major as its newest stable
@@ -797,7 +809,7 @@ def assess(entry, remote_digest, remote_config, gh):
         kind = "patch"
     else:
         kind = bump_kind(old, new)
-    if kind == "downgrade" or (new and is_prerelease(new) and not is_prerelease(old)):
+    if kind == "downgrade" or (new and is_pre(new, releases) and not is_pre(old, releases)):
         return {"status": "current", "current": old, "latest": old,
                 "github": gh, "url": release_url(gh, None)}
     release = find_release(releases, new) if new else None
@@ -1340,6 +1352,16 @@ def selftest():
         globals()["http_req"] = _saved
         _gh_cache.pop("seanmorley15/AdventureLog", None)
     assert (res["status"], res["current"], res["latest"], res["kind"]) == ("update", "v0.13.0", "v0.13.1", "patch"), res
+    # A release GitHub flags as pre-release is never offered, even with a clean name.
+    pre_list = [{"tag_name": "v2.0.0", "prerelease": True, "created_at": "2026-10-27T09:00:00Z"}] + old_list
+    _gh_cache["x/y"] = (time.time() + 3600, pre_list, time.time())
+    try:
+        res = assess(entry, "sha256:new", {"created": "2026-10-27T09:30:00Z",
+                                            "config": {"Labels": {"org.opencontainers.image.version": "v2.0.0"}}}, "x/y")
+    finally:
+        _gh_cache.pop("x/y", None)
+    assert res["status"] == "current" and res["latest"] == "v0.13.0", res
+    assert is_pre("v1.2.0-rc1", []) and not is_pre("v0.13.1", new_list)
     good = {"config": {"Labels": {"org.opencontainers.image.version": "0.12.9"}}}
     assert resolve_version(good, "ollama/ollama", rels, "2030")[1] == "label"
     # Image built before the release was published: the commit date counts.
