@@ -17,7 +17,8 @@ release. Then you update (or roll back) from your phone.
 ## Features
 
 - **Real versions, not digests.** `10.11.4 → 10.11.5 · patch`, `4.0.15 → 5.0.0 · major`,
-  even for images pinned to `latest`. Rebuilds without a new version are ignored.
+  even for images pinned to `latest`. A rebuild without a new version is shown as
+  a `build` update in the interface, but only notified if you ask for it.
 - **Versions you can trust.** Image labels lie sometimes (an Ollama image says
   `24.04`: that's its Ubuntu base). updock cross-checks every label against the
   project's real GitHub release tags, and falls back to release dates.
