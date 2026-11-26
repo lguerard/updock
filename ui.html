@@ -419,7 +419,8 @@ async function act(action, name, extra) {
 }
 
 async function updateAll() {
-  const list = data.containers.filter((c) => isUpdate(c) && c.can_update && c.kind !== "major" && !c.breaking && !c.job);
+  // updock itself restarts when it updates: never part of a batch.
+  const list = data.containers.filter((c) => isUpdate(c) && c.can_update && c.kind !== "major" && !c.breaking && !c.job && !c.self);
   if (!list.length || !confirm(T.confirm_all(list.length))) return;
   for (const c of list) {
     try { await api(`/api/update/${encodeURIComponent(c.name)}`, "POST"); } catch (e) { toast(`${c.name}: ${e.message}`, true); }
@@ -511,7 +512,7 @@ function render() {
     ? `<div class="ring up">${icon("up")}</div><div class="big">${esc(T.n_updates(updates.length))}${small}</div>`
     : `<div class="ring ok">${icon("check")}</div><div class="big">${esc(T.all_good)}${small}</div>`;
 
-  const safe = updates.filter((c) => c.can_update && c.kind !== "major" && !c.breaking && !c.job);
+  const safe = updates.filter((c) => c.can_update && c.kind !== "major" && !c.breaking && !c.job && !c.self);
   $("#updates").innerHTML = updates.length
     ? `<div class="bulk"><span class="section-title">${esc(T.available)}</span>${safe.length > 1 ? `<button class="btn sm" id="allBtn">${icon("up")}${esc(T.update_all)}<span class="hide-sm">&nbsp;${esc(T.no_major)}</span></button>` : ""}</div>
        <div class="cards">${updates.sort((a, b) => (a.kind === "major") - (b.kind === "major") || a.name.localeCompare(b.name)).map(card).join("")}</div>`

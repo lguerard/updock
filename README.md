@@ -136,6 +136,22 @@ Custom schedules combine comma-separated items: `03:30` (every day),
 with `HEAD` requests, which Docker Hub does not count, and GitHub answers are
 cached for 6 hours.
 
+## Updating updock itself
+
+updock watches its own container like any other and offers its new releases
+the same way (it is left out of *update all*). Since restarting its own
+container would stop it halfway, it pulls the new image, then hands over to a
+short-lived helper container, `updock-self-update`, started from the current
+updock image with the same mounts. The helper recreates updock, waits for it
+to be healthy and, if it is not, puts the previous image back. The page
+reconnects on its own and shows the result; the log of the last run is in
+`/data/self-update.log`.
+
+As for every other service, updock's own compose file must be visible inside
+updock at the same path: keep it in a folder you mount, e.g.
+`/opt/stacks/updock/compose.yaml`. To keep updating updock by hand instead,
+give it the `updock.enable=false` label.
+
 ## What updock never does
 
 - Change a tag (`v3` → `v4`, `16-alpine` → `17-alpine`): edit your compose file.
