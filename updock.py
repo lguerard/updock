@@ -30,6 +30,10 @@ the very compose files and project the container was started with (read
 from its ``com.docker.compose.*`` labels), waits for the container to be
 running and healthy, and offers a **Roll back** to the previous image.
 
+updock updates itself too: it pulls, then hands the restart over to a
+short-lived helper container (see ``hand_over``), which puts the previous
+image back if the new updock does not come up healthy.
+
 The web interface (``/``, same port) lists every container grouped by
 compose project and offers the same actions, plus "check now" and
 "recreate" for a container left on a deleted image. Its JSON API
@@ -52,6 +56,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import socket
 import subprocess
 import sys
@@ -119,7 +124,6 @@ _update_lock = threading.Lock()
 
 MESSAGES = {
     # key: (English, French)
-    "skip.self": ("updock itself", "updock lui-même"),
     "skip.disabled": ("disabled (label updock.enable=false)",
                       "désactivé (label updock.enable=false)"),
     "skip.local": ("built locally", "image construite localement"),
@@ -153,6 +157,10 @@ MESSAGES = {
     "job.back_to": ("back to {version}", "revenu à {version}"),
     "job.recreating": ("recreating the container…", "recréation du conteneur…"),
     "job.recreated": ("container recreated", "conteneur recréé"),
+    "job.handover": ("handing over to a helper container, updock restarts…",
+                     "relais par un conteneur auxiliaire, updock redémarre…"),
+    "job.finishing": ("checking that updock came back…",
+                      "vérification du redémarrage d'updock…"),
     "err.impossible": ("{name}: {action} not possible", "{name} : {action} impossible"),
     "err.not_compose": ("container not found or not managed by docker compose",
                         "conteneur introuvable ou non géré par docker compose"),
@@ -173,6 +181,10 @@ MESSAGES = {
     "err.no_previous": ("no previous image known", "aucune image précédente connue"),
     "err.no_restart": ("the container does not restart", "le conteneur ne redémarre pas"),
     "err.no_start": ("the container does not start", "le conteneur ne démarre pas"),
+    "err.helper": ("could not start the helper container: {why}",
+                   "impossible de lancer le conteneur auxiliaire : {why}"),
+    "err.self_restored": ("the new version did not start: previous image restored",
+                          "la nouvelle version ne démarrait pas : image précédente restaurée"),
     "updated.title": ("{name} updated ✅", "{name} mis à jour ✅"),
     "updated.body": ("{old} → {new}, the container is running.",
                      "{old} → {new}, le conteneur tourne."),
@@ -664,8 +676,25 @@ def http_button(label, url):
 
 # --- containers ---------------------------------------------------------------------
 
-SKIP_CODES = ("self", "disabled", "local", "pinned", "stale", "deleted", "error")
-SELF_ID = socket.gethostname()  # Docker sets it to our short container id
+SKIP_CODES = ("disabled", "local", "pinned", "stale", "deleted", "error")
+
+
+def _self_id():
+    """Our own container id: from the mount table (Docker bind-mounts
+    /etc/hostname etc. from /var/lib/docker/containers/<id>/), which holds
+    even with a custom ``hostname:`` or ``network_mode: host``; else the
+    hostname, which Docker sets to the short id by default."""
+    try:
+        with open("/proc/self/mountinfo") as f:
+            m = re.search(r"/containers/([0-9a-f]{64})/", f.read())
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return socket.gethostname()
+
+
+SELF_ID = _self_id()
 
 
 def inspect_containers():
@@ -695,11 +724,10 @@ def inspect_one(container_id):
              "compose": compose_args(labels),
              "project": labels.get("com.docker.compose.project", ""),
              "registry": registry, "repo": repo, "tag": tag, "pinned": pinned,
-             "image_id": info["Image"], "skip": None, "version": None}
-    if info["Id"].startswith(SELF_ID):
-        entry["skip"] = "self"
-        return entry
-    if labels.get("updock.enable", "").lower() == "false":
+             "image_id": info["Image"], "skip": None, "version": None,
+             "id": info["Id"], "self": info["Id"].startswith(SELF_ID)}
+    if labels.get("updock.enable", "").lower() == "false" and \
+            not (entry["self"] and _image_disabled(info["Image"])):
         entry["skip"] = "disabled"
         return entry
     try:
@@ -730,6 +758,17 @@ def inspect_one(container_id):
     elif not digests or ref.split(":")[0] == built:
         entry["skip"] = "local"
     return entry
+
+
+def _image_disabled(image_id):
+    """updock images up to 0.x carried ``updock.enable=false`` themselves:
+    on updock's own container, only a label set in compose disables it."""
+    try:
+        image = docker_get(f"/images/{image_id}/json")
+    except RuntimeError:
+        return False
+    labels = (image.get("Config") or {}).get("Labels") or {}
+    return labels.get("updock.enable", "").lower() == "false"
 
 
 def find_entry(name):
@@ -990,39 +1029,48 @@ def run_update(name, from_ntfy=False):
         old_version, old_image = entry["version"], entry["image_id"]
         log(f"{name}: updating ({entry['ref']})")
         ok, out = docker_cli(*c["args"], "pull", c["service"], cwd=c["workdir"])
+        if ok and entry["self"]:
+            return hand_over("update", entry, c, from_ntfy)
         if ok:
             set_job(name, "update", "running", _("job.restarting"))
             ok, out = docker_cli(*c["args"], "up", "-d", "--no-deps",
                                  c["service"], cwd=c["workdir"])
         healthy = ok and wait_healthy(name)
-        now = find_entry(name) or {}
-        new_version = pretty(now.get("version")) or "?"
-        with _state_lock:
-            state = load_state()
-            if ok:  # the container was recreated: the old image is a way back
-                state["rollback"][name] = {"image": old_image, "ref": entry["ref"],
-                                           "version": old_version}
-            if healthy:
-                res = state.get("results", {}).get(name, {})
-                state.setdefault("results", {})[name] = {
-                    "status": "current", "current": now.get("version"),
-                    "latest": now.get("version"), "github": res.get("github"),
-                    "url": res.get("url"), "checked": time.time()}
-            save_state(state)
-        rollback_btn = [http_button(_("btn.rollback"),
-                                    action_url("rollback", name, old_image))] if ok else []
+        why = "" if healthy else _("err.unhealthy") if ok else friendly_error(out)
+        if not healthy:
+            log(f"{name}: update failed\n{out}")
+        finish_update(name, entry["ref"], old_image, old_version, ok, why, from_ntfy)
+
+
+def finish_update(name, ref, old_image, old_version, recreated, why, from_ntfy):
+    """Record and report an update; ``why`` is empty when it worked."""
+    healthy = not why
+    now = find_entry(name) or {}
+    new_version = pretty(now.get("version")) or "?"
+    with _state_lock:
+        state = load_state()
+        if recreated:  # the old image is a way back
+            state["rollback"][name] = {"image": old_image, "ref": ref,
+                                       "version": old_version}
         if healthy:
-            log(f"{name}: updated to {new_version}")
-            set_job(name, "update", "done", f"{pretty(old_version) or '?'} → {new_version}")
-            if from_ntfy:
-                notify(_("updated.title", name=name),
-                       _("updated.body", old=pretty(old_version) or "?", new=new_version),
-                       ["white_check_mark"], 3, rollback_btn)
-            return
-        log(f"{name}: update failed\n{out}")
-        why = _("err.unhealthy") if ok else friendly_error(out)
-        set_job(name, "update", "failed", why)
-        notify(_("failed.title", name=name), why, ["x"], 5, rollback_btn)
+            res = state.get("results", {}).get(name, {})
+            state.setdefault("results", {})[name] = {
+                "status": "current", "current": now.get("version"),
+                "latest": now.get("version"), "github": res.get("github"),
+                "url": res.get("url"), "checked": time.time()}
+        save_state(state)
+    rollback_btn = [http_button(_("btn.rollback"),
+                                action_url("rollback", name, old_image))] if recreated else []
+    if healthy:
+        log(f"{name}: updated to {new_version}")
+        set_job(name, "update", "done", f"{pretty(old_version) or '?'} → {new_version}")
+        if from_ntfy:
+            notify(_("updated.title", name=name),
+                   _("updated.body", old=pretty(old_version) or "?", new=new_version),
+                   ["white_check_mark"], 3, rollback_btn)
+        return
+    set_job(name, "update", "failed", why)
+    notify(_("failed.title", name=name), why, ["x"], 5, rollback_btn)
 
 
 def friendly_error(out):
@@ -1053,35 +1101,47 @@ def run_rollback(name, old_image=None, from_ntfy=False):
         if not old_image:
             set_job(name, "rollback", "failed", _("err.no_previous"))
             return
+        if entry["self"]:
+            return hand_over("rollback", entry, c, from_ntfy, old_image)
         ok, out = docker_cli("tag", old_image, entry["ref"])
         if ok:
             ok, out = docker_cli(*c["args"], "up", "-d", "--no-deps", "--pull",
                                  "never", c["service"], cwd=c["workdir"])
-        if ok and wait_healthy(name):
-            version = pretty(saved.get("version")) or old_image[:19]
-            set_job(name, "rollback", "done", _("job.back_to", version=version))
-            with _state_lock:
-                state = load_state()
-                state["ignored"][name] = state["notified"].get(name, "")
-                state["rollback"].pop(name, None)
-                state.get("results", {}).pop(name, None)  # re-checked next run
-                save_state(state)
-            if from_ntfy:
-                notify(_("rolledback.title", name=name),
-                       _("rolledback.body", version=version), ["leftwards_arrow_with_hook"], 3)
-        else:
-            why = friendly_error(out) if not ok else _("err.no_restart")
-            set_job(name, "rollback", "failed", why)
-            notify(_("rollback_failed.title", name=name), why, ["x"], 5)
+        healthy = ok and wait_healthy(name)
+        finish_rollback(name, old_image, saved.get("version"),
+                        "" if healthy else friendly_error(out) if not ok else _("err.no_restart"),
+                        from_ntfy)
+
+
+def finish_rollback(name, old_image, old_version, why, from_ntfy):
+    """Record and report a rollback; ``why`` is empty when it worked."""
+    if not why:
+        version = pretty(old_version) or old_image[:19]
+        set_job(name, "rollback", "done", _("job.back_to", version=version))
+        with _state_lock:
+            state = load_state()
+            state["ignored"][name] = state["notified"].get(name, "")
+            state["rollback"].pop(name, None)
+            state.get("results", {}).pop(name, None)  # re-checked next run
+            save_state(state)
+        if from_ntfy:
+            notify(_("rolledback.title", name=name),
+                   _("rolledback.body", version=version), ["leftwards_arrow_with_hook"], 3)
+    else:
+        set_job(name, "rollback", "failed", why)
+        notify(_("rollback_failed.title", name=name), why, ["x"], 5)
 
 
 def run_recreate(name):
     """Recreate a container whose image is gone or was replaced."""
     with _update_lock:
         set_job(name, "recreate", "running", _("job.recreating"))
-        c = _compose_ready(name, "recreate", find_entry(name), False)
+        entry = find_entry(name)
+        c = _compose_ready(name, "recreate", entry, False)
         if not c:
             return
+        if entry["self"]:
+            return hand_over("recreate", entry, c, False)
         ok, out = docker_cli(*c["args"], "up", "-d", "--no-deps",
                              "--force-recreate", c["service"], cwd=c["workdir"])
         if ok and wait_healthy(name):
@@ -1089,6 +1149,149 @@ def run_recreate(name):
         else:
             set_job(name, "recreate", "failed",
                     friendly_error(out) if not ok else _("err.no_start"))
+
+
+# --- updating updock itself ----------------------------------------------------------
+# Recreating our own container would kill this process halfway through. So
+# updock pulls, then hands the restart over to a short-lived helper container
+# (the image we run: it has the docker CLI and compose), which sees the same
+# mounts (--volumes-from). The helper recreates the service, waits for the new
+# updock to be healthy and, after a failed update, puts the previous image
+# back. Whichever updock runs once the helper is gone reads its log, records
+# the outcome (state "self_job") and reports it like any other job.
+
+SELF_HELPER = "updock-self-update"
+
+
+def _self_log():
+    return os.path.join(os.path.dirname(STATE_FILE), "self-update.log")
+
+
+def self_script(action, name, ref, c, old_image, target=None):
+    """Shell script the helper runs. Its last ``updock-exit N`` line is the
+    outcome: 0 = done, 1 = failed, 2 = failed and previous image restored."""
+    q = shlex.quote
+    up = " ".join(q(a) for a in ["docker", *c["args"]]) + " up -d --no-deps"
+    svc = q(c["service"])
+    step = {"update": f"{up} {svc}",
+            "rollback": f"docker tag {q(target or '')} {q(ref)} && {up} --pull never {svc}",
+            "recreate": f"{up} --force-recreate {svc}"}[action]
+    fmt = q("{{.State.Status}} {{.RestartCount}} {{if .State.Health}}"
+            "{{.State.Health.Status}}{{end}}")
+    script = f"""exec >{q(_self_log())} 2>&1
+sleep 2
+if {step}; then
+  echo "updock-step-ok"
+  i=0
+  while [ $i -lt {HEALTH_TIMEOUT // 5} ]; do
+    sleep 5; i=$((i + 1))
+    set -- $(docker inspect -f {fmt} {q(name)} 2>/dev/null) x 0
+    [ "$2" = 0 ] || break
+    case "$1 ${{3:-}}" in
+      "running healthy") echo "updock-exit 0"; exit 0 ;;
+      "running x") [ $i -ge 3 ] && {{ echo "updock-exit 0"; exit 0; }} ;;
+      "running unhealthy"|exited*|dead*) break ;;
+    esac
+  done
+fi
+echo "updock-exit 1"
+"""
+    if action == "update":
+        script += (f"docker tag {q(old_image)} {q(ref)} && "
+                   f"{up} --pull never --force-recreate {svc}\n"
+                   'echo "updock-exit 2"\n')
+    return script
+
+
+def hand_over(action, entry, c, from_ntfy, target=None):
+    """Start the helper; called with _update_lock held, after the pull."""
+    name = entry["name"]
+    record = {"name": name, "action": action, "ref": entry["ref"],
+              "old_image": entry["image_id"], "old_version": entry["version"],
+              "target": target, "from_ntfy": from_ntfy, "t": time.time()}
+    with _state_lock:
+        state = load_state()
+        if action == "rollback":
+            record["target_version"] = state["rollback"].get(name, {}).get("version")
+        state["self_job"] = record
+        save_state(state)
+    try:
+        os.remove(_self_log())
+    except OSError:
+        pass
+    docker_cli("rm", "-f", SELF_HELPER)  # a leftover from a crashed run
+    script = self_script(action, name, entry["ref"], c, entry["image_id"], target)
+    ok, out = docker_cli("run", "-d", "--rm", "--name", SELF_HELPER,
+                         "--label", "updock.enable=false",
+                         "--volumes-from", entry["id"], "-w", c["workdir"],
+                         "-e", f"PWD={c['workdir']}", "--entrypoint", "sh",
+                         entry["image_id"], "-c", script)
+    if not ok:
+        with _state_lock:
+            state = load_state()
+            state.pop("self_job", None)
+            save_state(state)
+        why = _("err.helper", why=friendly_error(out))
+        log(f"{name}: {why}")
+        set_job(name, action, "failed", why)
+        if from_ntfy or action == "update":
+            notify(_("err.impossible", name=name, action=_("job." + action)), why, ["x"], 4)
+        return
+    log(f"{name}: {action} handed over to {SELF_HELPER}")
+    set_job(name, action, "running", _("job.handover"))
+    finish_self_job()  # returns only if this process survives the helper
+
+
+def _helper_running():
+    try:
+        return docker_get(f"/containers/{SELF_HELPER}/json")["State"].get("Running")
+    except RuntimeError:
+        return False
+
+
+def finish_self_job():
+    """Conclude a self update/rollback/recreate once the helper is gone."""
+    rec = load_state().get("self_job")
+    if not rec:
+        return
+    name, action = rec["name"], rec["action"]
+    if jobs.get(name, {}).get("state") != "running":
+        set_job(name, action, "running", _("job.finishing"))
+    deadline = time.time() + HEALTH_TIMEOUT + 600
+    while _helper_running() and time.time() < deadline:
+        time.sleep(3)
+    try:
+        with open(_self_log()) as f:
+            out = f.read()
+    except OSError:
+        out = ""
+    codes = re.findall(r"^updock-exit (\d)$", out, re.M)
+    code = codes[-1] if codes else None
+    with _state_lock:
+        state = load_state()
+        if state.get("self_job") != rec:
+            return  # concluded elsewhere
+        state.pop("self_job")
+        save_state(state)
+    log(f"{name}: {action} via {SELF_HELPER} ended with {code}\n{out[-1500:]}")
+    recreated = "updock-step-ok" in out
+    if code == "0":
+        why = ""
+    elif code == "2" and recreated:
+        why = _("err.self_restored")
+    elif recreated:
+        why = _("err.unhealthy" if action == "update" else "err.no_restart")
+    else:
+        why = friendly_error(out.split("updock-exit")[0]) if out.strip() else _("err.compose")
+    if action == "update":
+        finish_update(name, rec["ref"], rec["old_image"], rec["old_version"],
+                      recreated and code != "2", why, rec["from_ntfy"])
+    elif action == "rollback":
+        finish_rollback(name, rec["target"], rec.get("target_version"), why, rec["from_ntfy"])
+    elif why:
+        set_job(name, "recreate", "failed", why)
+    else:
+        set_job(name, "recreate", "done", _("job.recreated"))
 
 
 # --- web interface + API -----------------------------------------------------------------
@@ -1114,7 +1317,7 @@ def row(entry, res, state):
     out = {"name": name, "project": entry.get("project") or "—",
            "ref": entry["ref"], "current": pretty(entry.get("version")),
            "latest": None, "kind": None, "breaking": False, "notes": "",
-           "url": None, "reason": "", "job": job,
+           "url": None, "reason": "", "job": job, "self": entry.get("self", False),
            "can_rollback": name in state["rollback"] and bool(entry.get("compose")),
            "rollback_to": pretty(state["rollback"].get(name, {}).get("version")),
            "checked": res.get("checked") if res else None,
@@ -1418,6 +1621,11 @@ def selftest():
             raise AssertionError(bad)
         except ValueError:
             pass
+    c = {"args": ["compose", "-p", "my stack"], "service": "updock"}
+    sc = self_script("update", "updock", "ghcr.io/x/updock:latest", c, "sha256:old")
+    assert "docker compose -p 'my stack' up -d --no-deps updock" in sc
+    assert sc.rstrip().endswith('echo "updock-exit 2"') and "sha256:old" in sc
+    assert "--pull never updock" in self_script("rollback", "updock", "r", c, "o", "sha256:p")
     print("selftest ok")
 
 
@@ -1491,6 +1699,7 @@ def main():
     log(f"listening on :{PORT}, checks: {current_schedule()} ({time.tzname[0]})")
     # A release already notified is never notified again (state.json), so a
     # restart only rings for what is genuinely new since the last check.
+    threading.Thread(target=finish_self_job, daemon=True).start()
     if CHECK_ON_START:
         try:
             check_once()
