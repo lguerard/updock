@@ -136,8 +136,7 @@ html, body { overflow-x: hidden; }
 .group-h + .row { border-top: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
 .dot.current { background: var(--ok); }
-.dot.update { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.dot.rebuild { background: var(--ok); }
+.dot.update, .dot.rebuild { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .dot.ignored { background: var(--info); opacity: .7; }
 .dot.recreate { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
 .dot.error { background: var(--bad); }
@@ -328,13 +327,14 @@ document.documentElement.lang = LANG;
 
 const FILTERS = [
   ["all", T.f_all, () => true],
-  ["updates", T.f_updates, (c) => ["update", "ignored"].includes(c.status)],
+  ["updates", T.f_updates, (c) => ["update", "rebuild", "ignored"].includes(c.status)],
   ["attention", T.f_attention, (c) => ["recreate", "error"].includes(c.status) || c.job?.state === "failed"],
-  // A rebuild with the same version IS up to date: it only shows a badge.
-  ["current", T.f_current, (c) => ["current", "rebuild"].includes(c.status)],
+  ["current", T.f_current, (c) => c.status === "current"],
   ["other", T.f_other, (c) => ["other", "pending"].includes(c.status)],
 ];
-const STATUS_ORDER = { update: 0, recreate: 1, error: 2, ignored: 3, current: 4, rebuild: 4, pending: 6, other: 7 };
+const STATUS_ORDER = { update: 0, recreate: 1, error: 2, ignored: 3, current: 4, rebuild: 0, pending: 6, other: 7 };
+// A new build of the same version is still a new image to pull: an update.
+const isUpdate = (c) => ["update", "rebuild"].includes(c.status);
 const kindLabel = (k) => T["k_" + k] || k;
 const PRESETS = [["03:30", "p_night", true], ["07:00, 19:00", "p_twice"], ["every 6h", "p_6h"],
                  ["every 1h", "p_1h"], ["sun 03:30", "p_week"]];
@@ -419,7 +419,7 @@ async function act(action, name, extra) {
 }
 
 async function updateAll() {
-  const list = data.containers.filter((c) => c.status === "update" && c.can_update && c.kind !== "major" && !c.breaking && !c.job);
+  const list = data.containers.filter((c) => isUpdate(c) && c.can_update && c.kind !== "major" && !c.breaking && !c.job);
   if (!list.length || !confirm(T.confirm_all(list.length))) return;
   for (const c of list) {
     try { await api(`/api/update/${encodeURIComponent(c.name)}`, "POST"); } catch (e) { toast(`${c.name}: ${e.message}`, true); }
@@ -456,7 +456,7 @@ function actionsCell(c, compact) {
   if (c.can_recreate) b.push(`<button class="btn sm" data-act="recreate" data-name="${esc(c.name)}">${icon("refresh")}${esc(T.b_recreate)}</button>`);
   if (c.can_rollback && (c.job?.state === "failed" || !compact || c.job?.state === "done"))
     b.push(`<button class="icon-btn" title="${esc(T.b_rollback_to(c.rollback_to || T.b_prev))}" data-act="rollback" data-name="${esc(c.name)}">${icon("undo")}</button>`);
-  if (c.status === "update" && !compact) b.push(`<button class="icon-btn" title="${esc(T.b_ignore)}" data-act="ignore" data-name="${esc(c.name)}">${icon("mute")}</button>`);
+  if (isUpdate(c) && !compact) b.push(`<button class="icon-btn" title="${esc(T.b_ignore)}" data-act="ignore" data-name="${esc(c.name)}">${icon("mute")}</button>`);
   if (c.url) b.push(`<a class="icon-btn" title="${esc(T.b_notes_link)}" href="${esc(c.url)}" target="_blank" rel="noopener">${icon("ext")}</a>`);
   return b.join("");
 }
@@ -496,7 +496,7 @@ function rowHtml(c) {
 function render() {
   if (!data) return;
   const cs = data.containers;
-  const updates = cs.filter((c) => c.status === "update");
+  const updates = cs.filter(isUpdate);
   const attention = cs.filter(FILTERS[2][2]);
 
   $("#sub").textContent = data.checking ? T.checking : T.sub(ago(data.last_check), until(data.next_check));
